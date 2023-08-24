@@ -5,7 +5,6 @@ roi_being_selected = False
 tracker_initialized = False
 top_left_pt, bottom_right_pt = [], []
 
-
 def select_roi(event, x, y, flags, param):
     global top_left_pt, bottom_right_pt, roi_selected, roi_being_selected, x_cur, y_cur
     x_cur, y_cur = x, y
@@ -21,14 +20,10 @@ def select_roi(event, x, y, flags, param):
         cv2.rectangle(frame, top_left_pt[0], bottom_right_pt[0], (0, 255, 0), 2)
         cv2.imshow('Tracking', frame)
 
-
-# Use a video file instead of live stream
 cap = cv2.VideoCapture('match.mp4')
 cv2.namedWindow('Tracking')
 cv2.setMouseCallback('Tracking', select_roi)
 tracker = cv2.TrackerCSRT_create()
-
-# Calculate delay based on the video's frame rate
 fps = cap.get(cv2.CAP_PROP_FPS)
 delay = int(1000 / fps)
 
@@ -53,13 +48,16 @@ while True:
         if ret:
             p1 = (int(bbox[0]), int(bbox[1]))
             p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
+            center = (int((p1[0] + p2[0]) / 2), int((p1[1] + p2[1]) / 2))  # Center of the bounding box
             cv2.rectangle(frame, p1, p2, (0, 255, 0), 2)
+            
+            # Displaying the center coordinates of the tracked object
+            cv2.putText(frame, f"Center: {center}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
         else:
             cv2.putText(frame, "Tracking failure", (100, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
 
     cv2.imshow("Tracking", frame)
-
-    key = cv2.waitKey(delay)  # Introduce delay based on the frame rate
+    key = cv2.waitKey(delay)
     if key == ord('q'):
         break
     elif key == ord('s'):
