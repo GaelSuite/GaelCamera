@@ -49,16 +49,16 @@ class OnTheFlyTrainer:
 
     def _build_model(self):
         model = tf.keras.models.Sequential([
-            tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(64, 64, 3)),
-            tf.keras.layers.MaxPooling2D(2, 2),
+            tf.keras.layers.Conv2D(16, (3, 3), activation='relu', input_shape=(64, 64, 3)),  # Convolutional layer with 16 filters
             tf.keras.layers.Dropout(0.25),  # Dropout layer
-            tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dropout(0.5),  # Dropout layer
-            tf.keras.layers.Dense(1, activation='sigmoid')
+            tf.keras.layers.MaxPooling2D(2, 2),  # MaxPooling layer
+            tf.keras.layers.Flatten(),  # Flatten layer
+            tf.keras.layers.Dense(64, activation='relu'),  # Dense layer with 64 nodes
+            tf.keras.layers.Dense(1, activation='sigmoid')  # Output layer with sigmoid activation
         ])
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         return model
+
 
     def train(self, positive_samples, negative_samples):
         X = np.concatenate([positive_samples, negative_samples])
