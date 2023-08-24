@@ -43,46 +43,61 @@ def data_augmentation(positive_sample, negative_sample):
 
 # On-the-fly Trainer class
 
-class OnTheFlyTrainer:
+class OnTheFlyTrainerWithHyperparameterSearch:
     def __init__(self):
-        self.model = self._build_model()
+        self.best_model = None
+        self.best_val_accuracy = -float("inf")  # initialize with a very small number
 
-    def _build_model(self):
+    def _build_model(self, filters, kernel_size):
         model = tf.keras.models.Sequential([
-            tf.keras.layers.Conv2D(16, (3, 3), activation='relu', input_shape=(64, 64, 3)),  # Convolutional layer with 16 filters
-            tf.keras.layers.Dropout(0.25),  # Dropout layer
-            tf.keras.layers.MaxPooling2D(2, 2),  # MaxPooling layer
-            tf.keras.layers.Flatten(),  # Flatten layer
-            tf.keras.layers.Dense(64, activation='relu'),  # Dense layer with 64 nodes
-            tf.keras.layers.Dense(1, activation='sigmoid')  # Output layer with sigmoid activation
+            tf.keras.layers.Conv2D(filters, kernel_size, activation='relu', input_shape=(64, 64, 3)),
+            tf.keras.layers.Conv2D(16, (3, 3), activation='relu'),
+            tf.keras.layers.Dropout(0.25),
+            tf.keras.layers.MaxPooling2D(2, 2),
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(1, activation='sigmoid')
         ])
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         return model
 
-
-    def train(self, positive_samples, negative_samples):
+    def train_with_hyperparameters(self, positive_samples, negative_samples, filters_list, kernel_size_list):
         X = np.concatenate([positive_samples, negative_samples])
         Y = np.concatenate([np.ones(len(positive_samples)), np.zeros(len(negative_samples))])
-
-        # Split the data into training and validation
         split_idx = int(0.8 * len(X))
         X_train, Y_train = X[:split_idx], Y[:split_idx]
         X_val, Y_val = X[split_idx:], Y[split_idx:]
-
-        # Early stopping callback
         early_stop = EarlyStopping(monitor='val_loss', patience=3)
 
-        self.model.fit(X_train, Y_train, epochs=5, verbose=0, validation_data=(X_val, Y_val), callbacks=[early_stop])
+        # Hyperparameter search
+        for filters in filters_list:
+            for kernel_size in kernel_size_list:
+                model = self._build_model(filters, kernel_size)
+                history = model.fit(X_train, Y_train, epochs=5, verbose=0, validation_data=(X_val, Y_val), callbacks=[early_stop])
+                val_accuracy = history.history['val_accuracy'][-1]  # get the last val_accuracy
+                
+                # Check if this model is better
+                if val_accuracy > self.best_val_accuracy:
+                    self.best_val_accuracy = val_accuracy
+                    self.best_model = model
 
     def predict(self, patch):
-        return self.model.predict(np.array([patch]))
+        if self.best_model:
+            return self.best_model.predict(np.array([patch]))
+        else:
+            raise ValueError("Model has not been trained with hyperparameters yet.")
+
 
 def train_worker(training_queue, trainer):
     while True:
         pos_samples, neg_samples = training_queue.get()
         if pos_samples is None:  # Sentinel value to exit thread
             break
-        trainer.train(pos_samples, neg_samples)
+        trainer = OnTheFlyTrainerWithHyperparameterSearch()
+        filters_list = [8, 16, 32]
+        kernel_size_list = [(3, 3), (5, 5)]
+        trainer.train_with_hyperparameters(positive_samples, negative_samples, filters_list, kernel_size_list)
+
 
 # Initialize Trainer and Training Queue
 trainer = OnTheFlyTrainer()
