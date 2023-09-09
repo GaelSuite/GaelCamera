@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import time
 
+# Global variables
 roi_selected = False
 roi_being_selected = False
 tracker_initialized = False
@@ -15,20 +16,22 @@ max_past_points = 10
 prediction_length = 3
 speed_threshold = 5
 
+selected_points = []
+field_dims_in_feet = (12, 12)  # Vex field dimensions in feet
+
 def calculate_acceleration(current_speed, last_speed, time_interval):
     return (current_speed - last_speed) / time_interval
 
 def display_ar_overlays(frame, center, speed, acceleration, total_distance, robot_id="R001"):
     text_color = (0, 255, 255)  # Yellow
-    cv2.putText(frame, f"Speed: {speed:.2f} units/s", (center[0] + 20, center[1] - 40), 
+    cv2.putText(frame, f"Speed: {speed:.2f} ft/s", (center[0] + 20, center[1] - 40), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-    cv2.putText(frame, f"Acceleration: {acceleration:.2f} units/s^2", (center[0] + 20, center[1] - 20), 
+    cv2.putText(frame, f"Acceleration: {acceleration:.2f} ft/s^2", (center[0] + 20, center[1] - 20), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-    cv2.putText(frame, f"Total Distance: {total_distance:.2f} units", (center[0] + 20, center[1]), 
+    cv2.putText(frame, f"Total Distance: {total_distance:.2f} ft", (center[0] + 20, center[1]), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
     cv2.putText(frame, f"ID: {robot_id}", (center[0] + 20, center[1] + 20), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-
 
 def select_roi(event, x, y, flags, param):
     global top_left_pt, bottom_right_pt, roi_selected, roi_being_selected, x_cur, y_cur
@@ -44,6 +47,26 @@ def select_roi(event, x, y, flags, param):
         roi_being_selected = False
         cv2.rectangle(frame, top_left_pt[0], bottom_right_pt[0], (0, 255, 0), 2)
         cv2.imshow('Tracking', frame)
+
+def get_field_corners(event, x, y, flags, param):
+    global selected_points
+    if event == cv2.EVENT_LBUTTONDOWN:
+        selected_points.append((x, y))
+        cv2.circle(temp_frame, (x, y), 5, (0, 0, 255), -1)  # Draw red dot
+        if len(selected_points) > 1:
+            cv2.line(temp_frame, selected_points[-2], selected_points[-1], (255, 0, 0), 2)  # Draw blue line
+        cv2.imshow('Select Field Corners', temp_frame)
+        if len(selected_points) == 4:
+            cv2.line(temp_frame, selected_points[-1], selected_points[0], (255, 0, 0), 2)  # Close the polygon
+            cv2.imshow('Select Field Corners', temp_frame)
+            cv2.waitKey(1000)
+            cv2.destroyAllWindows()
+
+def warp_coordinates(point, matrix):
+    """Transform a point using the perspective transformation matrix."""
+    p = np.array([point[0], point[1], 1])
+    warped = np.dot(matrix, p)
+    return (warped[0] / warped[2], warped[1] / warped[2])
 
 def calculate_speed(point1, point2):
     return np.linalg.norm(np.array(point1) - np.array(point2))
@@ -78,13 +101,30 @@ def get_tracking_box_color(last_speed, current_speed):
     else:
         return (0, 0, 255)
 
-
 cap = cv2.VideoCapture('match.mp4')
+cv2.namedWindow('Select Field Corners')
+cv2.setMouseCallback('Select Field Corners', get_field_corners)
+ret, temp_frame = cap.read()
+frame_copy = temp_frame.copy()
+
+while len(selected_points) < 4:
+    cv2.imshow('Select Field Corners', temp_frame)
+    cv2.waitKey(1)
+
+dst_points = np.array([
+    [0, 0],
+    [field_dims_in_feet[0], 0],
+    [field_dims_in_feet[0], field_dims_in_feet[1]],
+    [0, field_dims_in_feet[1]]
+], dtype="float32")
+matrix = cv2.getPerspectiveTransform(np.array(selected_points, dtype="float32"), dst_points)
+
+# Now, for the main tracking loop
 cv2.namedWindow('Tracking')
 cv2.setMouseCallback('Tracking', select_roi)
 tracker = cv2.TrackerCSRT_create()
 fps = cap.get(cv2.CAP_PROP_FPS)
-delay = 1.0 / fps
+delay = 0.6 / fps
 frames_to_skip = 0
 last_speed = 0.0
 total_distance = 0.0
@@ -125,24 +165,26 @@ while True:
             if len(past_points) > max_past_points:
                 past_points.pop(0)
 
-            speed_value = calculate_speed(past_points[-2], past_points[-1]) if len(past_points) >= 2 else 0
-            acceleration = calculate_acceleration(speed_value, last_speed, delay)
-            total_distance += speed_value * delay
-            last_speed = speed_value
+            center_real_world = warp_coordinates(center, matrix)
+            if len(past_points) >= 2:
+                speed_value = calculate_speed(warp_coordinates(past_points[-2], matrix), center_real_world) / delay
+                acceleration = calculate_acceleration(speed_value, last_speed, delay)
+                total_distance += speed_value * delay
+                last_speed = speed_value
+                display_ar_overlays(frame, center, speed_value, acceleration, total_distance)
+                
+                if speed_value > speed_threshold:
+                    trajectory = predict_trajectory(past_points, degree, prediction_length)
+                    arrow_color = get_speed_color(center, trajectory[-1])
+                    for i in range(len(trajectory) - 1):
+                        cv2.line(frame, tuple(map(int, trajectory[i])), tuple(map(int, trajectory[i+1])), arrow_color, 2)
+                    cv2.arrowedLine(frame, tuple(map(int, trajectory[-2])), tuple(map(int, trajectory[-1])), arrow_color, 2, tipLength=0.5)
 
-            display_ar_overlays(frame, center, speed_value, acceleration, total_distance)
-            
-            box_color = get_tracking_box_color(calculate_speed(past_points[-3], past_points[-2]) if len(past_points) >= 3 else 0, speed_value)
-            cv2.rectangle(frame, p1, p2, box_color, 2)
-            if len(past_points) >= 2 and speed_value > speed_threshold:
-                trajectory = predict_trajectory(past_points, degree, prediction_length)
-                arrow_color = get_speed_color(center, trajectory[-1])
-                for i in range(len(trajectory) - 1):
-                    cv2.line(frame, tuple(map(int, trajectory[i])), tuple(map(int, trajectory[i+1])), arrow_color, 2)
-                cv2.arrowedLine(frame, tuple(map(int, trajectory[-2])), tuple(map(int, trajectory[-1])), arrow_color, 2, tipLength=0.5)
-            
-        else:
-            cv2.putText(frame, "Tracking failure", (100, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+                box_color = get_tracking_box_color(calculate_speed(past_points[-3], past_points[-2]) if len(past_points) >= 3 else 0, speed_value)
+                cv2.rectangle(frame, p1, p2, box_color, 2)
+                
+            else:
+                cv2.putText(frame, "Tracking failure", (100, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
 
     heatmap = cv2.GaussianBlur(heatmap, (15, 15), 0)
     heatmap_normalized = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX)
