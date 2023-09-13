@@ -90,6 +90,7 @@ class RobotTracker:
         self.y_cur = None
         self.frame = None
         self.max_past_points = 10
+        self.cap = None
         
 
     def select_roi(self, event, x, y, flags, param):
@@ -154,7 +155,7 @@ class RobotTracker:
         ], dtype="float32")
         matrix = cv2.getPerspectiveTransform(np.array(self.selected_points, dtype="float32"), dst_points)
         
-        cap = cv2.VideoCapture('match.mp4')
+        self.cap = cv2.VideoCapture('match.mp4')
         cv2.namedWindow('Tracking')
         cv2.setMouseCallback('Tracking', self.select_roi)
         last_speed = 0.0
@@ -166,7 +167,7 @@ class RobotTracker:
         
         while True:
             start_time = time.time()
-            ret, self.frame = cap.read()
+            ret, self.frame = self.cap.read()
             if not ret:
                 break
 
